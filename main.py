@@ -8,7 +8,6 @@ load_dotenv()  # Load environment variables from .env file
 
 import os
 import uuid
-import random
 from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -217,40 +216,45 @@ async def create_report_with_image(
     tags=["Reports"]
 )
 async def analyze_image(
-    image: UploadFile = File(...)
+    image: UploadFile = File(...),
+    severity: Optional[str] = Form(None)
 ):
     """
     Analyze an uploaded image to detect road damage severity.
     
-    This endpoint simulates AI-based image analysis.
-    In production, this would integrate with a YOLO or similar model.
+    Requires either:
+    - AI model integration (to be implemented)
+    - OR severity provided in request body
     
     Args:
         image: Image file to analyze
+        severity: Optional severity level if known (low, medium, high)
         
     Returns:
         Detected severity and confidence score
     """
-    filename = image.filename or ""
+    if not image.filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Image file is required"
+        )
     
-    # Simulate AI detection based on filename (for demo)
-    # In production, this would use actual ML model
-    if "high" in filename.lower():
-        severity = "high"
-        confidence = random.uniform(0.85, 0.98)
-    elif "low" in filename.lower():
-        severity = "low"
-        confidence = random.uniform(0.80, 0.95)
-    else:
-        # Random severity for demo
-        severities = ["low", "medium", "high"]
-        weights = [0.3, 0.4, 0.3]  # Slightly favor medium
-        severity = random.choices(severities, weights=weights)[0]
-        confidence = random.uniform(0.75, 0.95)
+    # If severity is provided by user/frontend, use it
+    if severity:
+        if severity.lower() not in ["low", "medium", "high"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Severity must be one of: low, medium, high"
+            )
+        return ImageAnalysisResponse(
+            severity=severity.lower(),
+            confidence_score=1.0
+        )
     
-    return ImageAnalysisResponse(
-        severity=severity,
-        confidence_score=round(confidence, 4)
+    # AI model not integrated - return error
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="AI model integration required. Provide severity manually or integrate ML model."
     )
 
 
