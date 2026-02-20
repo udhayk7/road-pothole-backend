@@ -15,6 +15,7 @@ COLUMNS = [
     ("estimated_repair_cost", "FLOAT"),
     ("delayed_repair_cost", "FLOAT"),
     ("cost_savings", "FLOAT"),
+    ("risk_category", "VARCHAR"),
 ]
 
 def main():

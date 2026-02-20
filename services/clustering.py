@@ -3,6 +3,7 @@ Clustering service using DBSCAN algorithm for geographic report grouping.
 Groups nearby reports into clusters based on their latitude/longitude coordinates.
 """
 
+import json
 import numpy as np
 from sklearn.cluster import DBSCAN
 from sqlalchemy.orm import Session
@@ -164,6 +165,19 @@ def run_clustering(db: Session) -> None:
 
     # 7️⃣ Commit ONCE after all assignments
     db.commit()
+
+    # Confirm predictive/financial fields are populated (sample cluster JSON)
+    sample = db.query(Cluster).first()
+    if sample:
+        sample_json = {
+            "id": sample.id,
+            "predicted_failure_days": sample.predicted_failure_days,
+            "estimated_repair_cost": sample.estimated_repair_cost,
+            "delayed_repair_cost": sample.delayed_repair_cost,
+            "cost_savings": sample.cost_savings,
+            "risk_category": sample.risk_category,
+        }
+        print("Sample cluster (predictive/financial fields):", json.dumps(sample_json, default=str))
 
 
 async def update_cluster_weather(db: Session, cluster_id: int) -> None:

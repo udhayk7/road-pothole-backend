@@ -80,7 +80,7 @@ class ClusterResponse(BaseModel):
     estimated_repair_cost: Optional[float] = None
     delayed_repair_cost: Optional[float] = None
     cost_savings: Optional[float] = None
-    risk_category: str = "Low"  # Critical | High | Medium | Low (from priority_score)
+    risk_category: Optional[str] = None  # Critical | High | Medium | Low (from priority_score)
 
     class Config:
         from_attributes = True
