@@ -63,7 +63,7 @@ class ReportResponse(BaseModel):
 # ============== Cluster Schemas ==============
 
 class ClusterResponse(BaseModel):
-    """Schema for cluster response with road type, weather, and ward info for Kerala."""
+    """Schema for cluster response with road type, weather, ward, and contractor for Kerala."""
     id: int
     avg_severity: float
     report_count: int
@@ -75,6 +75,7 @@ class ClusterResponse(BaseModel):
     center_lat: Optional[float] = None
     center_lon: Optional[float] = None
     status: str
+    contractor_name: Optional[str] = None
 
     class Config:
         from_attributes = True

@@ -145,6 +145,41 @@ def get_all_reports(db: Session = Depends(get_db)):
     return db.query(Report).order_by(Report.created_at.desc()).all()
 
 
+# Demo seed data (Kerala: Kochi, Trivandrum, Kozhikode, Thrissur, Kollam)
+DEMO_REPORTS = [
+    {"latitude": 9.9312, "longitude": 76.2673, "severity": "high", "road_name": "MG Road Kochi", "road_type": "primary"},
+    {"latitude": 8.5241, "longitude": 76.9366, "severity": "medium", "road_name": "NH 66 Trivandrum Bypass", "road_type": "primary"},
+    {"latitude": 11.2588, "longitude": 75.7804, "severity": "low", "road_name": "SM Street Kozhikode", "road_type": "secondary"},
+    {"latitude": 10.5276, "longitude": 76.2144, "severity": "high", "road_name": "Swaraj Round Thrissur", "road_type": "tertiary"},
+    {"latitude": 8.8932, "longitude": 76.6141, "severity": "medium", "road_name": "Kollam Beach Road", "road_type": "secondary"},
+]
+
+
+@app.post(
+    "/seed-demo-data",
+    tags=["Reports"],
+)
+def seed_demo_data(db: Session = Depends(get_db)):
+    """
+    Temporary endpoint: insert 5 demo reports in Kerala.
+    Kochi, Trivandrum, Kozhikode, Thrissur, Kollam. Realistic road_name and severity mix.
+    After inserting, runs run_clustering(db). Returns status.
+    """
+    for r in DEMO_REPORTS:
+        db.add(Report(
+            latitude=r["latitude"],
+            longitude=r["longitude"],
+            severity=r["severity"],
+            image_path=None,
+            road_name=r["road_name"],
+            road_type=r["road_type"],
+            ward_name="Unknown",
+        ))
+    db.commit()
+    run_clustering(db)
+    return {"status": "Demo Kerala data created"}
+
+
 @app.post(
     "/reports/upload",
     response_model=ReportResponse,
@@ -382,77 +417,49 @@ def get_cluster_by_id(cluster_id: int, db: Session = Depends(get_db)):
     return cluster
 
 
+def _generate_rule_based_summary(cluster: Cluster) -> str:
+    """Generate summary from cluster data using rule-based logic (no external APIs)."""
+    parts = []
+    if cluster.avg_severity >= 2.5:
+        parts.append("High severity damage detected.")
+    elif cluster.avg_severity >= 1.5:
+        parts.append("Moderate severity damage detected.")
+    else:
+        parts.append("Low severity damage detected.")
+    if cluster.priority_score >= 4:
+        parts.append("Urgent intervention required.")
+    if cluster.report_count > 3:
+        parts.append("Multiple citizen complaints detected.")
+    road_type = cluster.dominant_road_type or "unknown"
+    ward = cluster.ward_name or "Unknown"
+    parts.append(f"Location: {ward}. Road type: {road_type}. {cluster.report_count} report(s), priority score {cluster.priority_score}.")
+    return " ".join(parts)
+
+
 @app.post(
     "/cluster/{cluster_id}/summary",
     response_model=ClusterSummaryResponse,
     tags=["Clusters"]
 )
-async def get_cluster_summary(cluster_id: int, db: Session = Depends(get_db)):
+def get_cluster_summary(cluster_id: int, db: Session = Depends(get_db)):
     """
-    Generate an AI-powered risk assessment and repair recommendation for a cluster.
-    
-    Uses Google Gemini to analyze cluster data and generate:
-    - Risk assessment
-    - Impact analysis
-    - Recommended repair actions
-    - Resource estimates
-    
-    Args:
-        cluster_id: ID of the cluster to analyze
-        db: Database session (injected)
-        
-    Returns:
-        AI-generated summary with cluster metadata
-        
-    Raises:
-        HTTPException: If cluster not found or AI generation fails
+    Generate a rule-based risk summary for a cluster (no external APIs).
+    Uses avg_severity, report_count, priority_score, dominant_road_type, ward_name.
     """
     cluster = db.query(Cluster).filter(Cluster.id == cluster_id).first()
-    
     if not cluster:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Cluster with id {cluster_id} not found"
         )
-    
-    # Prepare cluster data for AI analysis
-    cluster_data = {
-        "id": cluster.id,
-        "avg_severity": cluster.avg_severity,
-        "report_count": cluster.report_count,
-        "priority_score": cluster.priority_score,
-        "status": cluster.status,
-        "reports": [
-            {
-                "id": r.id,
-                "latitude": r.latitude,
-                "longitude": r.longitude,
-                "severity": r.severity
-            }
-            for r in cluster.reports
-        ]
-    }
-    
-    try:
-        summary = await generate_cluster_summary(cluster_data)
-        
-        return ClusterSummaryResponse(
-            cluster_id=cluster.id,
-            summary=summary,
-            avg_severity=cluster.avg_severity,
-            report_count=cluster.report_count,
-            priority_score=cluster.priority_score
-        )
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(e)
-        )
-    except RuntimeError as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
+    summary = _generate_rule_based_summary(cluster)
+    return ClusterSummaryResponse(
+        cluster_id=cluster.id,
+        summary=summary,
+        avg_severity=cluster.avg_severity,
+        report_count=cluster.report_count,
+        priority_score=cluster.priority_score
+    )
 
 
 # ============== Ward Endpoints ==============

@@ -31,6 +31,18 @@ DBSCAN_EPS = 0.0001
 DBSCAN_MIN_SAMPLES = 1
 
 
+def _contractor_for_ward(ward_name: str) -> str:
+    """Assign contractor_name based on ward_name."""
+    if not ward_name:
+        return "PWD Kerala Division"
+    ward = ward_name.strip()
+    if "Kochi" in ward:
+        return "PWD Kochi Division"
+    if "Trivandrum" in ward:
+        return "PWD South Zone"
+    return "PWD Kerala Division"
+
+
 def severity_to_numeric(severity: str) -> int:
     """
     Convert severity string to numeric value.
@@ -101,6 +113,7 @@ def run_clustering(db: Session) -> None:
             rain_factor
         )
 
+        contractor_name = _contractor_for_ward(ward_name)
         new_cluster = Cluster(
             avg_severity=round(avg_severity, 2),
             report_count=report_count,
@@ -111,7 +124,8 @@ def run_clustering(db: Session) -> None:
             ward_name=ward_name,
             center_lat=round(center_lat, 6),
             center_lon=round(center_lon, 6),
-            status="pending"
+            status="pending",
+            contractor_name=contractor_name,
         )
 
         db.add(new_cluster)
