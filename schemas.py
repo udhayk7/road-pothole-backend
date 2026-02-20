@@ -63,7 +63,7 @@ class ReportResponse(BaseModel):
 # ============== Cluster Schemas ==============
 
 class ClusterResponse(BaseModel):
-    """Schema for cluster response with road type, weather, ward, and contractor for Kerala."""
+    """Schema for cluster response with road type, weather, ward, contractor, and cost fields."""
     id: int
     avg_severity: float
     report_count: int
@@ -76,6 +76,11 @@ class ClusterResponse(BaseModel):
     center_lon: Optional[float] = None
     status: str
     contractor_name: Optional[str] = None
+    predicted_failure_days: Optional[int] = None
+    estimated_repair_cost: Optional[float] = None
+    delayed_repair_cost: Optional[float] = None
+    cost_savings: Optional[float] = None
+    risk_category: str = "Low"  # Critical | High | Medium | Low (from priority_score)
 
     class Config:
         from_attributes = True
@@ -115,12 +120,11 @@ class MessageResponse(BaseModel):
 
 
 class ClusterSummaryResponse(BaseModel):
-    """Schema for AI-generated cluster summary response."""
-    cluster_id: int
+    """Schema for RAG-style cluster summary response (rule-based)."""
     summary: str
-    avg_severity: float
-    report_count: int
-    priority_score: float
+    risk_level: str  # low | medium | high
+    recommended_action: str
+    dispatch_timeline: str
 
 
 # ============== Image Analysis Schemas ==============
@@ -129,12 +133,16 @@ class ImageAnalysisResponse(BaseModel):
     """Schema for image analysis response."""
     severity: str = Field(..., description="Detected severity level")
     confidence_score: float = Field(..., ge=0, le=1, description="Confidence score of the detection")
+    authenticity_score: float = Field(..., ge=0, le=1, description="Authenticity score (0-1) from edge density, variance, nearby reports, severity match")
+    status: str = Field(..., description="verified or needs_review (suspicious when authenticity_score < 0.4)")
 
     class Config:
         json_schema_extra = {
             "example": {
                 "severity": "high",
-                "confidence_score": 0.92
+                "confidence_score": 0.92,
+                "authenticity_score": 0.78,
+                "status": "verified"
             }
         }
 
@@ -154,6 +162,13 @@ class WardListResponse(BaseModel):
     """Schema for list of wards."""
     wards: List[WardInfo]
     total: int
+
+
+class WardRiskItem(BaseModel):
+    """Schema for ward risk-index response item."""
+    ward_name: str
+    risk_index: float
+    cluster_count: int
 
 
 # ============== Dashboard Schemas ==============

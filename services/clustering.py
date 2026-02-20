@@ -104,7 +104,11 @@ def run_clustering(db: Session) -> None:
         center_lat, center_lon = calculate_cluster_centroid(cluster_reports)
         ward_name = get_ward_name(center_lat, center_lon)
 
-        rain_factor = 1.0
+        # Higher rain factor for high-rainfall wards (Piravom, Kochi, Ernakulam)
+        ward_upper = (ward_name or "").strip().upper()
+        rain_factor = 1.3 if (
+            "PIRAVOM" in ward_upper or "KOCHI" in ward_upper or "ERNAKULAM" in ward_upper
+        ) else 1.0
 
         priority_score = calculate_priority_score(
             avg_severity,
@@ -114,6 +118,21 @@ def run_clustering(db: Session) -> None:
         )
 
         contractor_name = _contractor_for_ward(ward_name)
+
+        # Predictive and financial calculations (do not affect clustering or priority)
+        predicted_failure_days = max(3, int(30 / (avg_severity * rain_factor))) if (avg_severity * rain_factor) > 0 else 30
+        estimated_repair_cost = report_count * 12000 * road_type_weight
+        delayed_repair_cost = estimated_repair_cost * 1.8
+        cost_savings = delayed_repair_cost - estimated_repair_cost
+        if priority_score > 6:
+            risk_category = "Critical"
+        elif priority_score > 4:
+            risk_category = "High"
+        elif priority_score > 2:
+            risk_category = "Medium"
+        else:
+            risk_category = "Low"
+
         new_cluster = Cluster(
             avg_severity=round(avg_severity, 2),
             report_count=report_count,
@@ -126,6 +145,11 @@ def run_clustering(db: Session) -> None:
             center_lon=round(center_lon, 6),
             status="pending",
             contractor_name=contractor_name,
+            predicted_failure_days=predicted_failure_days,
+            estimated_repair_cost=round(estimated_repair_cost),
+            delayed_repair_cost=round(delayed_repair_cost),
+            cost_savings=round(cost_savings),
+            risk_category=risk_category,
         )
 
         db.add(new_cluster)
