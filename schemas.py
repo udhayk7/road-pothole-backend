@@ -120,11 +120,16 @@ class MessageResponse(BaseModel):
 
 
 class ClusterSummaryResponse(BaseModel):
-    """Schema for RAG-style cluster summary response (rule-based)."""
+    """Schema for cluster summary response: municipal decision memo (data-driven, rule-based)."""
     summary: str
     risk_level: str  # low | medium | high
     recommended_action: str
     dispatch_timeline: str
+    urgency_level: str  # Immediate | Short-Term | Monitor
+    financial_impact_if_delayed: str
+    recommended_action_strategy: str
+    contractor_reassignment_advised: str
+    cost_saving_justification: str
 
 
 # ============== Image Analysis Schemas ==============
