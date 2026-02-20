@@ -28,7 +28,8 @@ from schemas import (
     WardDistribution,
     ImageAnalysisResponse,
     WardInfo,
-    WardListResponse
+    WardListResponse,
+    ContractorName,
 )
 from services.clustering import run_clustering, update_cluster_weather, update_all_clusters_weather
 from services.priority import get_clusters_by_priority
@@ -344,6 +345,21 @@ def get_clusters_by_priority_endpoint(db: Session = Depends(get_db)):
         List of clusters sorted by priority_score descending
     """
     return get_clusters_by_priority(db)
+
+
+@app.get(
+    "/contractors",
+    response_model=List[ContractorName],
+    tags=["Clusters"]
+)
+def get_contractors(db: Session = Depends(get_db)):
+    """
+    Get all unique contractor names from the Cluster table.
+    Returns empty list if no clusters exist.
+    """
+    rows = db.query(Cluster.contractor_name).distinct().all()
+    names = [r[0] for r in rows if r[0]]
+    return [ContractorName(name=n) for n in sorted(names)]
 
 
 @app.patch(

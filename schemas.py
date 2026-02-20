@@ -93,6 +93,11 @@ class ClusterStatusUpdate(BaseModel):
     """Schema for updating cluster status."""
     status: ClusterStatus = Field(..., description="New status for the cluster")
 
+
+class ContractorName(BaseModel):
+    """Schema for a single contractor name in the contractors list."""
+    name: str
+
     class Config:
         json_schema_extra = {
             "example": {
