@@ -36,7 +36,7 @@ from services.gemini import generate_cluster_summary
 from services.osm_lookup import get_road_info
 from services.weather import get_rain_factor, get_weather_summary
 from services.ward_lookup import get_ward_name, get_ward_details, get_all_wards, get_wards_by_district
-from services.yolo_inference import analyze_image as yolo_analyze_image
+from services.lightweight_inference import analyze_image as lightweight_analyze_image
 
 # Create uploads directory if it doesn't exist
 UPLOAD_DIR = "uploads"
@@ -218,16 +218,16 @@ async def create_report_with_image(
 )
 async def analyze_image(image: UploadFile = File(...)):
     """
-    Analyze an uploaded image for road damage using YOLOv8 local inference.
+    Analyze an uploaded image for road damage using lightweight edge-based inference.
     
-    Saves the image locally, runs YOLOv8 (yolov8n.pt), and returns
-    severity (none/low/medium/high) and confidence_score from the first detection.
+    Saves the image locally, runs OpenCV edge analysis, and returns
+    severity (low/medium/high) and confidence_score.
     
     Args:
         image: Image file to analyze
         
     Returns:
-        Detected severity and confidence score from YOLOv8
+        Detected severity and confidence score
     """
     if not image.filename:
         raise HTTPException(
@@ -251,7 +251,7 @@ async def analyze_image(image: UploadFile = File(...)):
         ) from e
     
     try:
-        result = yolo_analyze_image(saved_path)
+        result = lightweight_analyze_image(saved_path)
         return ImageAnalysisResponse(
             severity=result["severity"],
             confidence_score=result["confidence_score"]
