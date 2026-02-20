@@ -98,10 +98,10 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# Configure CORS middleware
+# Configure CORS so Next.js dashboard (e.g. http://localhost:3000) can access Railway backend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=["*"],  # For hackathon demo (allows all origins)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
