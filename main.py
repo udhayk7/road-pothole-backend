@@ -36,6 +36,7 @@ from services.gemini import generate_cluster_summary
 from services.osm_lookup import get_road_info
 from services.weather import get_rain_factor, get_weather_summary
 from services.ward_lookup import get_ward_name, get_ward_details, get_all_wards, get_wards_by_district
+from services.yolo_inference import analyze_image as yolo_analyze_image
 
 # Create uploads directory if it doesn't exist
 UPLOAD_DIR = "uploads"
@@ -215,23 +216,18 @@ async def create_report_with_image(
     response_model=ImageAnalysisResponse,
     tags=["Reports"]
 )
-async def analyze_image(
-    image: UploadFile = File(...),
-    severity: Optional[str] = Form(None)
-):
+async def analyze_image(image: UploadFile = File(...)):
     """
-    Analyze an uploaded image to detect road damage severity.
+    Analyze an uploaded image for road damage using YOLOv8 local inference.
     
-    Requires either:
-    - AI model integration (to be implemented)
-    - OR severity provided in request body
+    Saves the image locally, runs YOLOv8 (yolov8n.pt), and returns
+    severity (none/low/medium/high) and confidence_score from the first detection.
     
     Args:
         image: Image file to analyze
-        severity: Optional severity level if known (low, medium, high)
         
     Returns:
-        Detected severity and confidence score
+        Detected severity and confidence score from YOLOv8
     """
     if not image.filename:
         raise HTTPException(
@@ -239,23 +235,39 @@ async def analyze_image(
             detail="Image file is required"
         )
     
-    # If severity is provided by user/frontend, use it
-    if severity:
-        if severity.lower() not in ["low", "medium", "high"]:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Severity must be one of: low, medium, high"
-            )
-        return ImageAnalysisResponse(
-            severity=severity.lower(),
-            confidence_score=1.0
-        )
+    # Save uploaded image to a temporary path
+    ext = os.path.splitext(image.filename)[1] or ".jpg"
+    safe_name = f"{uuid.uuid4().hex}{ext}"
+    saved_path = os.path.join(UPLOAD_DIR, safe_name)
     
-    # AI model not integrated - return error
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="AI model integration required. Provide severity manually or integrate ML model."
-    )
+    try:
+        contents = await image.read()
+        with open(saved_path, "wb") as f:
+            f.write(contents)
+    except OSError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to save uploaded image: {e}"
+        ) from e
+    
+    try:
+        result = yolo_analyze_image(saved_path)
+        return ImageAnalysisResponse(
+            severity=result["severity"],
+            confidence_score=result["confidence_score"]
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        ) from e
+    finally:
+        # Clean up saved file
+        try:
+            if os.path.exists(saved_path):
+                os.remove(saved_path)
+        except OSError:
+            pass
 
 
 # ============== Cluster Endpoints ==============

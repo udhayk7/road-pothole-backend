@@ -25,3 +25,7 @@ Thumbs.db
 
 # Uploads
 uploads/
+
+# YOLO model (downloaded on first run)
+yolov8n.pt
+*.pt
