@@ -98,14 +98,10 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# CORS: allow Next.js dashboard and Railway frontend
-origins = [
-    "http://localhost:3000",
-    "https://web-production-1b01c.up.railway.app"
-]
+# Configure CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],  # Configure appropriately for production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -501,95 +497,50 @@ def get_cluster_by_id(cluster_id: int, db: Session = Depends(get_db)):
 
 def _generate_rag_style_summary(cluster: Cluster) -> dict:
     """
-    Data-driven cluster summary as municipal decision memo. No external APIs.
-    Uses: avg_severity, predicted_failure_days, cost_savings, risk_category,
-    road_type, rain_factor, report_count (plus estimated/delayed cost, ward, contractor).
+    RAG-style rule-based summary using cluster fields. No external APIs.
+    Returns dict with summary, risk_level, recommended_action, dispatch_timeline.
     """
     avg_severity = cluster.avg_severity or 0.0
     report_count = cluster.report_count or 0
     priority_score = cluster.priority_score or 0.0
     ward_name = cluster.ward_name or "Unknown"
-    road_type = (cluster.dominant_road_type or "unknown").strip() or "unknown"
+    dominant_road_type = cluster.dominant_road_type or "unknown"
     rain_factor = cluster.rain_factor or 1.0
-    predicted_failure_days = cluster.predicted_failure_days if cluster.predicted_failure_days is not None else 30
-    cost_savings_val = cluster.cost_savings if cluster.cost_savings is not None else 0.0
-    estimated_repair = cluster.estimated_repair_cost if cluster.estimated_repair_cost is not None else 0.0
-    delayed_repair = cluster.delayed_repair_cost if cluster.delayed_repair_cost is not None else 0.0
-    risk_category = (cluster.risk_category or "Low").strip()
+    predicted_failure_days = cluster.predicted_failure_days if cluster.predicted_failure_days is not None else 0
+    cost_savings = cluster.cost_savings if cluster.cost_savings is not None else 0.0
     contractor_name = cluster.contractor_name or "assigned contractor"
 
-    cost_int = int(round(cost_savings_val))
-    est_int = int(round(estimated_repair))
-    del_int = int(round(delayed_repair))
-
-    # Urgency level: data-driven from risk_category and predicted_failure_days
-    if risk_category == "Critical" or (risk_category == "High" and predicted_failure_days <= 10):
-        urgency_level = "Immediate"
-    elif risk_category == "High" or risk_category == "Medium" or predicted_failure_days <= 20:
-        urgency_level = "Short-Term"
+    # Severity level text
+    if avg_severity >= 2.5:
+        severity_level = "High"
+    elif avg_severity >= 1.5:
+        severity_level = "Medium"
     else:
-        urgency_level = "Monitor"
+        severity_level = "Low"
 
-    # Financial impact if delayed (data-driven)
-    if del_int > est_int:
-        financial_impact_if_delayed = (
-            f"Delaying repair beyond {predicted_failure_days} days will incur an estimated "
-            f"additional cost of ₹{del_int - est_int:,} INR (total delayed cost ₹{del_int:,} vs "
-            f"estimated repair cost ₹{est_int:,} INR if addressed now)."
-        )
-    else:
-        financial_impact_if_delayed = (
-            f"Estimated repair cost ₹{est_int:,} INR. Delayed intervention would increase total cost."
-        )
+    # 1. Situation Overview
+    situation = f"{severity_level} severity damage reported with {report_count} citizen complaint(s) in this cluster."
+    if report_count > 3:
+        situation += " Multiple complaints indicate a persistent infrastructure issue."
 
-    # Recommended action strategy (data-driven from report_count, road_type, risk_category, predicted_failure_days)
-    road_importance = "primary" if road_type in ("primary", "trunk") else "secondary" if road_type == "secondary" else "local"
-    if risk_category == "Critical":
-        strategy = (
-            f"Prioritise inspection within 7 days given {report_count} report(s) and "
-            f"predicted failure in {predicted_failure_days} days on this {road_importance} road. "
-            f"Execute repair or temporary mitigation before further deterioration."
-        )
-    elif risk_category == "High":
-        strategy = (
-            f"Schedule site visit within 14 days; {report_count} complaint(s) and "
-            f"{predicted_failure_days}-day failure horizon warrant prompt action on {road_importance} infrastructure."
-        )
-    else:
-        strategy = (
-            f"Include in next maintenance cycle; monitor. {report_count} report(s), "
-            f"estimated failure in {predicted_failure_days} days. Road type: {road_type}."
-        )
+    # 2. Environmental Context
+    env_context = ""
+    if rain_factor > 1.1:
+        env_context = " Monsoon-driven deterioration is likely; elevated rain factor increases urgency."
 
-    # Contractor reassignment advised (data-driven: Critical + high rain_factor suggests reassessment)
-    if risk_category == "Critical" and rain_factor > 1.2:
-        contractor_reassignment_advised = (
-            f"Yes — Elevated rain factor ({rain_factor:.1f}) and critical risk suggest "
-            f"reassessing capacity of {contractor_name}; consider backup or accelerated timeline."
-        )
-    elif risk_category == "High" and rain_factor > 1.1:
-        contractor_reassignment_advised = (
-            f"Review — High risk and rain factor {rain_factor:.1f}; confirm {contractor_name} "
-            f"can meet recommended timeline."
-        )
-    else:
-        contractor_reassignment_advised = (
-            f"No — Current assignment to {contractor_name} is appropriate for {risk_category} risk "
-            f"and rain factor {rain_factor:.1f}."
-        )
+    # 3. Infrastructure Risk
+    risk_text = f" Predicted time to failure is approximately {predicted_failure_days} days if left unaddressed."
 
-    # Cost-saving justification (data-driven)
-    if cost_int > 0:
-        cost_saving_justification = (
-            f"Timely repair avoids ₹{cost_int:,} INR in additional costs: estimated repair now "
-            f"₹{est_int:,} INR vs delayed scenario ₹{del_int:,} INR. Savings justify immediate allocation."
-        )
-    else:
-        cost_saving_justification = (
-            f"Estimated repair cost ₹{est_int:,} INR. Early intervention prevents cost escalation."
-        )
+    # 4. Financial Impact
+    cost_int = int(round(cost_savings))
+    financial = f" Timely repair yields cost savings of ₹{cost_int:,} INR compared to delayed intervention."
 
-    # risk_level (keep for compatibility)
+    # 5. Governance Recommendation
+    gov = f" Recommend dispatching {contractor_name} for inspection and repair. Ward: {ward_name}. Road type: {dominant_road_type}."
+
+    full_summary = situation + env_context + risk_text + financial + gov
+
+    # risk_level
     if avg_severity >= 2.5 or priority_score >= 15:
         risk_level = "high"
     elif avg_severity >= 1.5 or priority_score >= 8:
@@ -597,45 +548,27 @@ def _generate_rag_style_summary(cluster: Cluster) -> dict:
     else:
         risk_level = "low"
 
-    # recommended_action and dispatch_timeline (data-driven)
-    if urgency_level == "Immediate":
-        recommended_action = (
-            f"Dispatch {contractor_name} for immediate inspection and repair; "
-            f"consider temporary safety measures given {predicted_failure_days}-day failure horizon."
-        )
+    # recommended_action
+    if risk_level == "high":
+        recommended_action = "Dispatch contractor for immediate inspection and repair; consider temporary safety measures."
+    elif risk_level == "medium":
+        recommended_action = "Schedule contractor visit for assessment and repair within the recommended timeline."
+    else:
+        recommended_action = "Plan routine maintenance; assign contractor within the recommended window."
+
+    # dispatch_timeline
+    if risk_level == "high":
         dispatch_timeline = "within 7 days"
-    elif urgency_level == "Short-Term":
-        recommended_action = (
-            f"Schedule {contractor_name} for assessment and repair within the recommended timeline "
-            f"({report_count} report(s), {road_type})."
-        )
+    elif risk_level == "medium":
         dispatch_timeline = "within 14 days"
     else:
-        recommended_action = (
-            f"Plan routine maintenance; assign {contractor_name} within the monitoring window."
-        )
         dispatch_timeline = "within 30 days"
 
-    # Full summary as municipal decision memo (structured, all data-driven)
-    sections = [
-        f"1. URGENCY LEVEL: {urgency_level}.",
-        f"2. FINANCIAL IMPACT IF DELAYED: {financial_impact_if_delayed}",
-        f"3. RECOMMENDED ACTION STRATEGY: {strategy}",
-        f"4. CONTRACTOR REASSIGNMENT: {contractor_reassignment_advised}",
-        f"5. COST-SAVING JUSTIFICATION: {cost_saving_justification}",
-    ]
-    summary = " ".join(sections)
-
     return {
-        "summary": summary,
+        "summary": full_summary,
         "risk_level": risk_level,
         "recommended_action": recommended_action,
         "dispatch_timeline": dispatch_timeline,
-        "urgency_level": urgency_level,
-        "financial_impact_if_delayed": financial_impact_if_delayed,
-        "recommended_action_strategy": strategy,
-        "contractor_reassignment_advised": contractor_reassignment_advised,
-        "cost_saving_justification": cost_saving_justification,
     }
 
 

@@ -80,7 +80,7 @@ class ClusterResponse(BaseModel):
     estimated_repair_cost: Optional[float] = None
     delayed_repair_cost: Optional[float] = None
     cost_savings: Optional[float] = None
-    risk_category: Optional[str] = None  # Critical | High | Medium | Low (from priority_score)
+    risk_category: str = "Low"  # Critical | High | Medium | Low (from priority_score)
 
     class Config:
         from_attributes = True
@@ -120,16 +120,11 @@ class MessageResponse(BaseModel):
 
 
 class ClusterSummaryResponse(BaseModel):
-    """Schema for cluster summary response: municipal decision memo (data-driven, rule-based)."""
+    """Schema for RAG-style cluster summary response (rule-based)."""
     summary: str
     risk_level: str  # low | medium | high
     recommended_action: str
     dispatch_timeline: str
-    urgency_level: str  # Immediate | Short-Term | Monitor
-    financial_impact_if_delayed: str
-    recommended_action_strategy: str
-    contractor_reassignment_advised: str
-    cost_saving_justification: str
 
 
 # ============== Image Analysis Schemas ==============
