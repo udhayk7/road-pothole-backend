@@ -30,11 +30,6 @@ class Cluster(Base):
     center_lon = Column(Float, nullable=True)  # Cluster centroid longitude
     status = Column(String, default="pending")  # pending, in_progress, completed
     contractor_name = Column(String, nullable=True)  # Assigned by ward (e.g. PWD Kochi Division)
-    predicted_failure_days = Column(Integer, nullable=True)
-    estimated_repair_cost = Column(Float, nullable=True)
-    delayed_repair_cost = Column(Float, nullable=True)
-    cost_savings = Column(Float, nullable=True)
-    risk_category = Column(String, nullable=True)
 
     # Relationship to access all reports in this cluster
     reports = relationship("Report", back_populates="cluster")

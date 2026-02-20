@@ -160,6 +160,26 @@ The system uses SQLite for data persistence. The database file (`road_infrastruc
 
 Get your Gemini API key from: https://makersuite.google.com/app/apikey
 
+## Railway schema reset (demo/hackathon)
+
+If you see `column clusters.risk_category does not exist` (or similar) in Railway logs, the Postgres tables were created before new Cluster/Report columns were added. For a quick reset:
+
+1. **Connect to Railway Postgres**
+   - Railway dashboard → your Postgres service → **Connect** → copy **Postgres connection URL**, or use the **Query** tab in Railway.
+
+2. **Drop existing tables** (run this SQL):
+   ```sql
+   DROP TABLE IF EXISTS reports CASCADE;
+   DROP TABLE IF EXISTS clusters CASCADE;
+   ```
+   Or run the script: `scripts/railway_reset_schema.sql`
+
+3. **Restart or redeploy** the backend service so `Base.metadata.create_all(bind=engine)` runs on startup and recreates the tables with the current schema.
+
+4. **Verify**: `GET /clusters` should return `[]` or valid JSON without a 500 error.
+
+Do not change or remove SQLAlchemy model fields (e.g. `risk_category`, `predicted_failure_days`, `estimated_repair_cost`, `delayed_repair_cost`, `cost_savings`).
+
 ## License
 
 MIT

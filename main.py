@@ -6,14 +6,13 @@ Provides REST API endpoints for managing road infrastructure reports and cluster
 from dotenv import load_dotenv
 load_dotenv()  # Load environment variables from .env file
 
-import math
 import os
 import uuid
 from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 from database import engine, get_db, Base
 from models import Report, Cluster
@@ -30,57 +29,15 @@ from schemas import (
     ImageAnalysisResponse,
     WardInfo,
     WardListResponse,
-    WardRiskItem,
     ContractorName,
 )
 from services.clustering import run_clustering, update_cluster_weather, update_all_clusters_weather
 from services.priority import get_clusters_by_priority
+from services.gemini import generate_cluster_summary
 from services.osm_lookup import get_road_info
 from services.weather import get_rain_factor, get_weather_summary
 from services.ward_lookup import get_ward_name, get_ward_details, get_all_wards, get_wards_by_district
 from services.lightweight_inference import analyze_image as lightweight_analyze_image
-
-# Haversine distance in meters (for authenticity: nearby reports within 50m)
-def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    R = 6_371_000  # Earth radius in meters
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlam = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    return R * c
-
-_SEVERITY_TO_NUM = {"low": 1, "medium": 2, "high": 3}
-_NEARBY_RADIUS_M = 50
-
-def _get_nearby_authenticity(
-    latitude: float, longitude: float, detected_severity: str, db: Session
-) -> Tuple[float, float]:
-    """
-    Returns (nearby_score, severity_match_score) in 0-1.
-    nearby_score: 1 if any report within 50m, else 0.
-    severity_match_score: 1 if detected severity is close to nearby cluster avg, else 0; 0.5 if no nearby cluster.
-    """
-    reports = db.query(Report).all()
-    nearby = [r for r in reports if _haversine_m(latitude, longitude, r.latitude, r.longitude) <= _NEARBY_RADIUS_M]
-    nearby_score = 1.0 if len(nearby) > 0 else 0.0
-
-    if not nearby:
-        return nearby_score, 0.5
-    # Find cluster(s) of these reports and use cluster avg_severity
-    cluster_ids = {r.cluster_id for r in nearby if r.cluster_id is not None}
-    if not cluster_ids:
-        return nearby_score, 0.5
-    cluster = db.query(Cluster).filter(Cluster.id.in_(cluster_ids)).first()
-    if cluster is None or cluster.avg_severity is None:
-        return nearby_score, 0.5
-    detected_num = _SEVERITY_TO_NUM.get(detected_severity.lower(), 2)
-    avg = cluster.avg_severity
-    if abs(detected_num - avg) <= 0.5:
-        severity_match_score = 1.0
-    else:
-        severity_match_score = 0.0
-    return nearby_score, severity_match_score
 
 # Create uploads directory if it doesn't exist
 UPLOAD_DIR = "uploads"
@@ -98,14 +55,13 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# CORS: allow all origins so browser gets Access-Control-Allow-Origin even on 500 responses
+# Configure CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=["*"],  # Configure appropriately for production
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
 )
 
 # Mount static files for serving uploaded images
@@ -294,28 +250,23 @@ async def create_report_with_image(
     return db_report
 
 
-# Weights for authenticity_score (must sum to 1.0)
-_AUTH_EDGE_WEIGHT = 0.35
-_AUTH_VARIANCE_WEIGHT = 0.25
-_AUTH_NEARBY_WEIGHT = 0.20
-_AUTH_SEVERITY_MATCH_WEIGHT = 0.20
-
-
 @app.post(
     "/analyze",
     response_model=ImageAnalysisResponse,
     tags=["Reports"]
 )
-async def analyze_image(
-    image: UploadFile = File(...),
-    latitude: Optional[float] = Form(None),
-    longitude: Optional[float] = Form(None),
-    db: Session = Depends(get_db),
-):
+async def analyze_image(image: UploadFile = File(...)):
     """
     Analyze an uploaded image for road damage using lightweight edge-based inference.
-    Returns severity, confidence_score, authenticity_score, and status (verified / needs_review).
-    Optionally pass latitude/longitude to factor in nearby reports and cluster severity for authenticity.
+    
+    Saves the image locally, runs OpenCV edge analysis, and returns
+    severity (low/medium/high) and confidence_score.
+    
+    Args:
+        image: Image file to analyze
+        
+    Returns:
+        Detected severity and confidence score
     """
     if not image.filename:
         raise HTTPException(
@@ -323,6 +274,7 @@ async def analyze_image(
             detail="Image file is required"
         )
     
+    # Save uploaded image to a temporary path
     ext = os.path.splitext(image.filename)[1] or ".jpg"
     safe_name = f"{uuid.uuid4().hex}{ext}"
     saved_path = os.path.join(UPLOAD_DIR, safe_name)
@@ -339,31 +291,9 @@ async def analyze_image(
     
     try:
         result = lightweight_analyze_image(saved_path)
-        edge_score = result.get("edge_density_score", 0.0)
-        var_score = result.get("grayscale_variance_score", 0.0)
-
-        if latitude is not None and longitude is not None:
-            nearby_score, severity_match_score = _get_nearby_authenticity(
-                latitude, longitude, result["severity"], db
-            )
-        else:
-            nearby_score = 0.5
-            severity_match_score = 0.5
-
-        authenticity_score = (
-            _AUTH_EDGE_WEIGHT * edge_score
-            + _AUTH_VARIANCE_WEIGHT * var_score
-            + _AUTH_NEARBY_WEIGHT * nearby_score
-            + _AUTH_SEVERITY_MATCH_WEIGHT * severity_match_score
-        )
-        authenticity_score = round(min(1.0, max(0.0, authenticity_score)), 4)
-        status_val = "verified" if authenticity_score >= 0.4 else "needs_review"
-
         return ImageAnalysisResponse(
             severity=result["severity"],
-            confidence_score=result["confidence_score"],
-            authenticity_score=authenticity_score,
-            status=status_val,
+            confidence_score=result["confidence_score"]
         )
     except Exception as e:
         raise HTTPException(
@@ -371,6 +301,7 @@ async def analyze_image(
             detail=str(e)
         ) from e
     finally:
+        # Clean up saved file
         try:
             if os.path.exists(saved_path):
                 os.remove(saved_path)
@@ -505,81 +436,23 @@ def get_cluster_by_id(cluster_id: int, db: Session = Depends(get_db)):
     return cluster
 
 
-def _generate_rag_style_summary(cluster: Cluster) -> dict:
-    """
-    RAG-style rule-based summary using cluster fields. No external APIs.
-    Returns dict with summary, risk_level, recommended_action, dispatch_timeline.
-    """
-    avg_severity = cluster.avg_severity or 0.0
-    report_count = cluster.report_count or 0
-    priority_score = cluster.priority_score or 0.0
-    ward_name = cluster.ward_name or "Unknown"
-    dominant_road_type = cluster.dominant_road_type or "unknown"
-    rain_factor = cluster.rain_factor or 1.0
-    predicted_failure_days = cluster.predicted_failure_days if cluster.predicted_failure_days is not None else 0
-    cost_savings = cluster.cost_savings if cluster.cost_savings is not None else 0.0
-    contractor_name = cluster.contractor_name or "assigned contractor"
-
-    # Severity level text
-    if avg_severity >= 2.5:
-        severity_level = "High"
-    elif avg_severity >= 1.5:
-        severity_level = "Medium"
+def _generate_rule_based_summary(cluster: Cluster) -> str:
+    """Generate summary from cluster data using rule-based logic (no external APIs)."""
+    parts = []
+    if cluster.avg_severity >= 2.5:
+        parts.append("High severity damage detected.")
+    elif cluster.avg_severity >= 1.5:
+        parts.append("Moderate severity damage detected.")
     else:
-        severity_level = "Low"
-
-    # 1. Situation Overview
-    situation = f"{severity_level} severity damage reported with {report_count} citizen complaint(s) in this cluster."
-    if report_count > 3:
-        situation += " Multiple complaints indicate a persistent infrastructure issue."
-
-    # 2. Environmental Context
-    env_context = ""
-    if rain_factor > 1.1:
-        env_context = " Monsoon-driven deterioration is likely; elevated rain factor increases urgency."
-
-    # 3. Infrastructure Risk
-    risk_text = f" Predicted time to failure is approximately {predicted_failure_days} days if left unaddressed."
-
-    # 4. Financial Impact
-    cost_int = int(round(cost_savings))
-    financial = f" Timely repair yields cost savings of ₹{cost_int:,} INR compared to delayed intervention."
-
-    # 5. Governance Recommendation
-    gov = f" Recommend dispatching {contractor_name} for inspection and repair. Ward: {ward_name}. Road type: {dominant_road_type}."
-
-    full_summary = situation + env_context + risk_text + financial + gov
-
-    # risk_level
-    if avg_severity >= 2.5 or priority_score >= 15:
-        risk_level = "high"
-    elif avg_severity >= 1.5 or priority_score >= 8:
-        risk_level = "medium"
-    else:
-        risk_level = "low"
-
-    # recommended_action
-    if risk_level == "high":
-        recommended_action = "Dispatch contractor for immediate inspection and repair; consider temporary safety measures."
-    elif risk_level == "medium":
-        recommended_action = "Schedule contractor visit for assessment and repair within the recommended timeline."
-    else:
-        recommended_action = "Plan routine maintenance; assign contractor within the recommended window."
-
-    # dispatch_timeline
-    if risk_level == "high":
-        dispatch_timeline = "within 7 days"
-    elif risk_level == "medium":
-        dispatch_timeline = "within 14 days"
-    else:
-        dispatch_timeline = "within 30 days"
-
-    return {
-        "summary": full_summary,
-        "risk_level": risk_level,
-        "recommended_action": recommended_action,
-        "dispatch_timeline": dispatch_timeline,
-    }
+        parts.append("Low severity damage detected.")
+    if cluster.priority_score >= 4:
+        parts.append("Urgent intervention required.")
+    if cluster.report_count > 3:
+        parts.append("Multiple citizen complaints detected.")
+    road_type = cluster.dominant_road_type or "unknown"
+    ward = cluster.ward_name or "Unknown"
+    parts.append(f"Location: {ward}. Road type: {road_type}. {cluster.report_count} report(s), priority score {cluster.priority_score}.")
+    return " ".join(parts)
 
 
 @app.post(
@@ -589,9 +462,8 @@ def _generate_rag_style_summary(cluster: Cluster) -> dict:
 )
 def get_cluster_summary(cluster_id: int, db: Session = Depends(get_db)):
     """
-    Generate a RAG-style rule-based risk summary for a cluster (no external APIs).
-    Uses avg_severity, report_count, priority_score, ward_name, dominant_road_type,
-    rain_factor, predicted_failure_days, cost_savings, contractor_name.
+    Generate a rule-based risk summary for a cluster (no external APIs).
+    Uses avg_severity, report_count, priority_score, dominant_road_type, ward_name.
     """
     cluster = db.query(Cluster).filter(Cluster.id == cluster_id).first()
     if not cluster:
@@ -599,41 +471,17 @@ def get_cluster_summary(cluster_id: int, db: Session = Depends(get_db)):
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Cluster with id {cluster_id} not found"
         )
-    result = _generate_rag_style_summary(cluster)
-    return ClusterSummaryResponse(**result)
+    summary = _generate_rule_based_summary(cluster)
+    return ClusterSummaryResponse(
+        cluster_id=cluster.id,
+        summary=summary,
+        avg_severity=cluster.avg_severity,
+        report_count=cluster.report_count,
+        priority_score=cluster.priority_score
+    )
 
 
 # ============== Ward Endpoints ==============
-
-@app.get(
-    "/wards/risk-index",
-    response_model=List[WardRiskItem],
-    tags=["Wards"]
-)
-def get_wards_risk_index(db: Session = Depends(get_db)):
-    """
-    Top 5 wards by risk: group clusters by ward_name, sum priority_score per ward,
-    sort descending, return top 5 with ward_name, risk_index, cluster_count.
-    """
-    clusters = db.query(Cluster).all()
-    by_ward: dict = {}
-    for c in clusters:
-        ward = c.ward_name or "Unknown"
-        if ward not in by_ward:
-            by_ward[ward] = {"total_priority": 0.0, "cluster_count": 0}
-        by_ward[ward]["total_priority"] += c.priority_score or 0.0
-        by_ward[ward]["cluster_count"] += 1
-    items = [
-        WardRiskItem(
-            ward_name=ward,
-            risk_index=round(data["total_priority"], 2),
-            cluster_count=data["cluster_count"],
-        )
-        for ward, data in by_ward.items()
-    ]
-    items.sort(key=lambda x: x.risk_index, reverse=True)
-    return items[:5]
-
 
 @app.get(
     "/wards",
