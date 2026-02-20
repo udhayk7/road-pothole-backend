@@ -98,20 +98,11 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# Configure CORS middleware (explicit origins required when allow_credentials=True)
-CORS_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "https://localhost:3000",
-    "https://127.0.0.1:3000",
-]
-_extra_origins = os.environ.get("CORS_ORIGINS", "")
-if _extra_origins:
-    CORS_ORIGINS.extend(o.strip() for o in _extra_origins.split(",") if o.strip())
+# CORS: allow all origins so browser gets Access-Control-Allow-Origin even on 500 responses
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
