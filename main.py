@@ -153,6 +153,9 @@ DEMO_REPORTS = [
     {"latitude": 11.2588, "longitude": 75.7804, "severity": "low", "road_name": "SM Street Kozhikode", "road_type": "secondary"},
     {"latitude": 10.5276, "longitude": 76.2144, "severity": "high", "road_name": "Swaraj Round Thrissur", "road_type": "tertiary"},
     {"latitude": 8.8932, "longitude": 76.6141, "severity": "medium", "road_name": "Kollam Beach Road", "road_type": "secondary"},
+    # Piravom (Chinmaya area)
+    {"latitude": 9.8666, "longitude": 76.4922, "road_name": "Chinmaya Road, Piravom", "severity": "high", "road_type": "secondary", "confidence_score": 0.92},
+    {"latitude": 9.8672, "longitude": 76.4915, "road_name": "Piravom Town Junction", "severity": "medium", "road_type": "secondary", "confidence_score": 0.68},
 ]
 
 
@@ -162,8 +165,7 @@ DEMO_REPORTS = [
 )
 def seed_demo_data(db: Session = Depends(get_db)):
     """
-    Temporary endpoint: insert 5 demo reports in Kerala.
-    Kochi, Trivandrum, Kozhikode, Thrissur, Kollam. Realistic road_name and severity mix.
+    Temporary endpoint: insert demo reports in Kerala + Piravom (Chinmaya area).
     After inserting, runs run_clustering(db). Returns status.
     """
     for r in DEMO_REPORTS:
@@ -173,12 +175,13 @@ def seed_demo_data(db: Session = Depends(get_db)):
             severity=r["severity"],
             image_path=None,
             road_name=r["road_name"],
-            road_type=r["road_type"],
+            road_type=r.get("road_type", "unknown"),
             ward_name="Unknown",
+            confidence_score=r.get("confidence_score"),
         ))
     db.commit()
     run_clustering(db)
-    return {"status": "Demo Kerala data created"}
+    return {"status": "Demo Kerala + Piravom data created"}
 
 
 @app.post(

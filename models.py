@@ -53,6 +53,7 @@ class Report(Base):
     road_name = Column(String, nullable=True, default="Unknown")
     road_type = Column(String, nullable=True, default="unknown")
     ward_name = Column(String, nullable=True, default="Unknown")  # Kerala ward name
+    confidence_score = Column(Float, nullable=True)  # Optional detection confidence (0–1)
     created_at = Column(DateTime, default=datetime.utcnow)
     cluster_id = Column(Integer, ForeignKey("clusters.id"), nullable=True)
 
