@@ -5,6 +5,7 @@ Supports PostgreSQL via DATABASE_URL environment variable.
 """
 
 import os
+import logging
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
@@ -17,7 +18,9 @@ load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 if not DATABASE_URL:
-    raise ValueError("DATABASE_URL environment variable is not set")
+    logging.error("DATABASE_URL environment variable is not set.")
+    logging.error("Set DATABASE_URL in Railway → Variables.")
+    raise RuntimeError("DATABASE_URL is required in production environment.")
 
 # Create SQLAlchemy engine for PostgreSQL
 engine = create_engine(DATABASE_URL)

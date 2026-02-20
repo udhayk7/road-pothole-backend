@@ -47,74 +47,60 @@ def severity_to_numeric(severity: str) -> int:
 def run_clustering(db: Session) -> None:
     """
     Execute DBSCAN clustering on all reports and update cluster assignments.
-    
-    This function:
-    1. Fetches all reports from the database
-    2. Applies DBSCAN clustering based on geographic coordinates
-    3. Creates/updates clusters with aggregated statistics
-    4. Assigns cluster_id to each report
-    
-    Args:
-        db: SQLAlchemy database session
     """
-    # Fetch all reports
+
+    # 1️⃣ Fetch all reports
     reports = db.query(Report).all()
-    
+
+    # 2️⃣ Always clear old cluster references
+    db.query(Report).update({Report.cluster_id: None})
+    db.commit()
+
+    # 3️⃣ Always delete old clusters
+    db.query(Cluster).delete()
+    db.commit()
+
+    # 4️⃣ If not enough reports, stop after cleanup
     if len(reports) < DBSCAN_MIN_SAMPLES:
-        # Not enough reports to form clusters
         return
-    
+
     # Prepare coordinate data for clustering
     coordinates = np.array([[r.latitude, r.longitude] for r in reports])
-    
-    # Run DBSCAN clustering
+
+    # Run DBSCAN
     clustering = DBSCAN(eps=DBSCAN_EPS, min_samples=DBSCAN_MIN_SAMPLES)
     cluster_labels = clustering.fit_predict(coordinates)
-    
-    # Get unique cluster labels (excluding noise points labeled as -1)
+
+    # Get unique cluster labels (exclude noise = -1)
     unique_labels = set(cluster_labels)
-    unique_labels.discard(-1)  # Remove noise label
-    
-    # Clear existing cluster assignments for reports that will be reclustered
-    for report in reports:
-        report.cluster_id = None
-    
-    # Delete existing clusters to rebuild fresh
-    db.query(Cluster).delete()
-    db.flush()
-    
-    # Process each cluster
-    cluster_id_mapping: Dict[int, int] = {}  # Maps DBSCAN label to DB cluster ID
-    
+    unique_labels.discard(-1)
+
+    cluster_id_mapping: Dict[int, int] = {}
+
+    # 5️⃣ Create clusters
     for label in unique_labels:
-        # Get indices of reports in this cluster
         cluster_indices = np.where(cluster_labels == label)[0]
         cluster_reports = [reports[i] for i in cluster_indices]
-        
-        # Calculate cluster statistics
+
         severities = [severity_to_numeric(r.severity) for r in cluster_reports]
         avg_severity = sum(severities) / len(severities)
         report_count = len(cluster_reports)
-        
-        # Get dominant road type and its weight for priority calculation
+
         dominant_road_type = get_dominant_road_type(cluster_reports)
         road_type_weight = get_road_type_weight(dominant_road_type)
-        
-        # Calculate cluster centroid for weather lookups and ward assignment
+
         center_lat, center_lon = calculate_cluster_centroid(cluster_reports)
-        
-        # Get ward name for cluster centroid
         ward_name = get_ward_name(center_lat, center_lon)
-        
-        # Default rain factor (will be updated async after cluster creation)
+
         rain_factor = 1.0
-        
-        # Calculate priority with road type weight and rain factor
+
         priority_score = calculate_priority_score(
-            avg_severity, report_count, road_type_weight, rain_factor
+            avg_severity,
+            report_count,
+            road_type_weight,
+            rain_factor
         )
-        
-        # Create new cluster with road type, weather, and ward info
+
         new_cluster = Cluster(
             avg_severity=round(avg_severity, 2),
             report_count=report_count,
@@ -127,18 +113,18 @@ def run_clustering(db: Session) -> None:
             center_lon=round(center_lon, 6),
             status="pending"
         )
+
         db.add(new_cluster)
-        db.flush()  # Get the cluster ID
-        
-        # Store mapping for report assignment
+        db.flush()  # Get ID without committing
         cluster_id_mapping[label] = new_cluster.id
-    
-    # Assign cluster IDs to reports
+
+    # 6️⃣ Assign cluster_id to reports
     for i, report in enumerate(reports):
         label = cluster_labels[i]
-        if label != -1:  # Not a noise point
+        if label != -1:
             report.cluster_id = cluster_id_mapping[label]
-    
+
+    # 7️⃣ Commit ONCE after all assignments
     db.commit()
 
 
