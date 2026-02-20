@@ -28,7 +28,7 @@ SEVERITY_MAP: Dict[str, int] = {
 # DBSCAN parameters
 # eps ≈ 0.0001 corresponds to roughly 11 meters at the equator
 DBSCAN_EPS = 0.0001
-DBSCAN_MIN_SAMPLES = 2
+DBSCAN_MIN_SAMPLES = 1
 
 
 def severity_to_numeric(severity: str) -> int:
