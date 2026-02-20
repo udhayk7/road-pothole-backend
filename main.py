@@ -98,13 +98,23 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# Configure CORS middleware
+# Configure CORS middleware (explicit origins required when allow_credentials=True)
+CORS_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://localhost:3000",
+    "https://127.0.0.1:3000",
+]
+_extra_origins = os.environ.get("CORS_ORIGINS", "")
+if _extra_origins:
+    CORS_ORIGINS.extend(o.strip() for o in _extra_origins.split(",") if o.strip())
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Mount static files for serving uploaded images
@@ -293,6 +303,13 @@ async def create_report_with_image(
     return db_report
 
 
+# Weights for authenticity_score (must sum to 1.0)
+_AUTH_EDGE_WEIGHT = 0.35
+_AUTH_VARIANCE_WEIGHT = 0.25
+_AUTH_NEARBY_WEIGHT = 0.20
+_AUTH_SEVERITY_MATCH_WEIGHT = 0.20
+
+
 @app.post(
     "/analyze",
     response_model=ImageAnalysisResponse,
@@ -305,9 +322,9 @@ async def analyze_image(
     db: Session = Depends(get_db),
 ):
     """
-    Analyze an uploaded image for road damage. Returns severity, confidence_score,
-    authenticity_score (weighted: edge density, grayscale variance, nearby reports, severity match),
-    and status (verified or needs_review; needs_review when authenticity_score < 0.4).
+    Analyze an uploaded image for road damage using lightweight edge-based inference.
+    Returns severity, confidence_score, authenticity_score, and status (verified / needs_review).
+    Optionally pass latitude/longitude to factor in nearby reports and cluster severity for authenticity.
     """
     if not image.filename:
         raise HTTPException(
@@ -331,8 +348,8 @@ async def analyze_image(
     
     try:
         result = lightweight_analyze_image(saved_path)
-        edge_score = result.get("edge_density_score", 0.5)
-        variance_score = result.get("grayscale_variance_score", 0.5)
+        edge_score = result.get("edge_density_score", 0.0)
+        var_score = result.get("grayscale_variance_score", 0.0)
 
         if latitude is not None and longitude is not None:
             nearby_score, severity_match_score = _get_nearby_authenticity(
@@ -342,18 +359,20 @@ async def analyze_image(
             nearby_score = 0.5
             severity_match_score = 0.5
 
-        authenticity_score = round(
-            (edge_score * 0.25 + variance_score * 0.25 + nearby_score * 0.25 + severity_match_score * 0.25),
-            2
+        authenticity_score = (
+            _AUTH_EDGE_WEIGHT * edge_score
+            + _AUTH_VARIANCE_WEIGHT * var_score
+            + _AUTH_NEARBY_WEIGHT * nearby_score
+            + _AUTH_SEVERITY_MATCH_WEIGHT * severity_match_score
         )
-        authenticity_score = max(0.0, min(1.0, authenticity_score))
-        status = "verified" if authenticity_score >= 0.4 else "needs_review"
+        authenticity_score = round(min(1.0, max(0.0, authenticity_score)), 4)
+        status_val = "verified" if authenticity_score >= 0.4 else "needs_review"
 
         return ImageAnalysisResponse(
             severity=result["severity"],
             confidence_score=result["confidence_score"],
             authenticity_score=authenticity_score,
-            status=status,
+            status=status_val,
         )
     except Exception as e:
         raise HTTPException(
